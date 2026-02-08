@@ -1,0 +1,97 @@
+name: Deploy Daily Digest to Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['reports/**', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate index page
+        run: |
+          mkdir -p docs
+          cat > docs/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>📰 每日热点日报</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+            <style>
+              body { max-width: 900px; margin: 0 auto; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f6f8fa; }
+              .markdown-body { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+              .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+              .nav a { padding: 6px 14px; background: white; border-radius: 6px; text-decoration: none; color: #0969da; border: 1px solid #d0d7de; font-size: 14px; }
+              .nav a:hover, .nav a.active { background: #0969da; color: white; }
+              h1 { margin-top: 0; }
+              .loading { text-align: center; padding: 40px; color: #656d76; }
+            </style>
+          </head>
+          <body>
+            <h1>📰 每日热点日报</h1>
+            <div class="nav" id="nav"></div>
+            <div class="markdown-body" id="content">
+              <div class="loading">加载中...</div>
+            </div>
+            <script>
+              async function loadIndex() {
+                const res = await fetch('reports.json');
+                const reports = await res.json();
+                const nav = document.getElementById('nav');
+                reports.forEach((r, i) => {
+                  const a = document.createElement('a');
+                  a.href = '#' + r;
+                  a.textContent = r;
+                  if (i === 0) a.className = 'active';
+                  a.onclick = () => loadReport(r);
+                  nav.appendChild(a);
+                });
+                if (reports.length > 0) loadReport(reports[0]);
+                else document.getElementById('content').innerHTML = '<p>暂无日报</p>';
+              }
+              async function loadReport(date) {
+                document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.textContent === date));
+                const res = await fetch('reports/' + date + '.md');
+                const md = await res.text();
+                document.getElementById('content').innerHTML = marked.parse(md);
+                window.location.hash = date;
+              }
+              loadIndex();
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+
+          # Generate reports.json (sorted newest first)
+          cd reports
+          ls -r *.md 2>/dev/null | sed 's/.md//' | jq -R -s 'split("\n") | map(select(length > 0))' > ../docs/reports.json
+          cp -r . ../docs/reports/ 2>/dev/null || true
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
